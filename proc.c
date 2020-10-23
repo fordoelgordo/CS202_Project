@@ -88,6 +88,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->syscall = 0; // Initialize new proc with zero system calls
 
   release(&ptable.lock);
 
@@ -532,3 +533,82 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+/*
+ * Project 1 Specification:
+ * Add the int info(int) system call with allowed parameters 1, 2, 3
+ *
+*/
+int
+info(int n)
+{
+  if (n <= 0 || n >= 4) {
+    return -1; // need to call info with either 1, 2 or 3
+  }
+
+  struct proc *curproc = myproc();
+
+  // Enable interrupts
+  sti();
+
+  // Code to handle n = 1
+  if (n == 1) {
+    // Count the number of proccesses in the system
+    int numproc = 0;
+    struct proc *p;
+    acquire(&ptable.lock);
+    // Loop through the process table counting each process
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if (p->state != UNUSED)
+        ++numproc; // increment the process count
+    }
+    release(&ptable.lock);
+    return numproc;
+  }
+  
+  // Code to handle n = 2
+  if (n == 2) {
+    // We amended the code in syscall.c to increment the syscall counter in the per-process state, so simply return
+    return curproc->syscall;
+  }
+     
+  // Code to handle n = 3
+  if (n == 3) {
+    // Return the number of memory pages the current process is using
+    // the size of the proc / PGSIZE refers to the number of pages the process has mapped
+    return curproc->sz / PGSIZE;
+  }
+
+  // If we get here something went wrong
+  return -1;
+} 
+
+// Temp system call to print all processes in the system
+// Need to convert the proc state to a string
+const char * const procstring[] =
+{
+  [ZOMBIE] = "ZOMBIE",
+  [EMBRYO] = "EMBRYO",
+  [RUNNING] = "RUNNING",
+  [RUNNABLE] = "RUNNABLE",
+  [SLEEPING] = "SLEEPING",
+  [UNUSED] = "UNUSED"
+};
+
+int
+print_proc(void)
+{
+  struct proc* p;
+  sti();
+
+  // Loop through the process table and print stats
+  acquire(&ptable.lock);
+  cprintf("proc \t pid \t state \t \n");
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->state != UNUSED)
+      cprintf("%s \t %d \t %s \t \n", p->name, p->pid , procstring[p->state]); 
+  }
+  release(&ptable.lock);
+
+  return 23; // Just the integer associated with the system call
+}  

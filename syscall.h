@@ -20,3 +20,7 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+#define SYS_info   22 // Adding new system call to the syscall library
+#define SYS_print_proc 23 // temp system call to print the number of processes there are
+#define SYS_growproc 24 // Adding system call to grow proc memory pages to illustrate memory page usage
+

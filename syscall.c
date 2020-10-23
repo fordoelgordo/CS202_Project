@@ -103,6 +103,9 @@ extern int sys_unlink(void);
 extern int sys_wait(void);
 extern int sys_write(void);
 extern int sys_uptime(void);
+extern int sys_info(void);
+extern int sys_print_proc(void);
+extern int sys_growproc(void);
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -126,8 +129,12 @@ static int (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+[SYS_info]    sys_info,
+[SYS_print_proc]  sys_print_proc,
+[SYS_growproc] sys_growproc,
 };
 
+// This is called whenever a process performs a system call
 void
 syscall(void)
 {
@@ -135,6 +142,9 @@ syscall(void)
   struct proc *curproc = myproc();
 
   num = curproc->tf->eax;
+  // Here we can increment our system call counter, as the process will execute this code whenever a system call is made
+  ++curproc->syscall;
+
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     curproc->tf->eax = syscalls[num]();
   } else {

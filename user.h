@@ -23,6 +23,9 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int info(int); // Adding prototype to user.h which defines functions available to users
+int print_proc(void);
+int growproc(int);
 
 // ulib.c
 int stat(const char*, struct stat*);

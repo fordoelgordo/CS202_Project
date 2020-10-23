@@ -89,3 +89,36 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+/* Depending on user value, returns:
+ * 1. count of proceses in the system
+ * 2. count of the total number of system calls that the current process has made so far
+ * 3. number of memory pages the current process is using
+ *
+*/
+int
+sys_info(void)
+{
+  int n;
+  if(argint(0, &n) < 0)
+    return -1;
+  return info(n);
+}
+
+// Print function to demonstrate info(1) functionality
+int
+sys_print_proc(void)
+{
+  return print_proc();
+}
+
+// Growproc function to demonstrate info(3) functionality
+int
+sys_growproc(void)
+{
+  int n;
+  if(argint(0, &n) < 0)
+    return -1;
+  growproc(n * PGSIZE);
+  return 0;
+} 

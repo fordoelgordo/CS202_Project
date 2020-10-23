@@ -120,6 +120,8 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+int		info(int); // Add function prototype, will be implemented in proc.c
+int		print_proc(void); // temp function to print number of processes
 
 // swtch.S
 void            swtch(struct context**, struct context*);
