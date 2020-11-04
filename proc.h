@@ -49,7 +49,16 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+/* ******************************************************** */
+/* FSt.J edits to proc state to implement stride scheduling */
+/* ******************************************************** */
+  int tickets; 		       // Ticket allocation of a process
+  int pass; 		       // Virtual time index for next selection
+  int stride; 		       // Inversely proportional to tickets, represents the time interval between selections, measured in passes
+  int ticks;                   // Hold the number of times the process has been scheduled
 };
+
+struct proc* minproc(void); // We'll use this little function to return the proc with minimum pass
 
 // Process memory is laid out contiguously, low addresses first:
 //   text

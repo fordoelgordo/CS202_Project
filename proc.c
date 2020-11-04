@@ -111,6 +111,12 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
+  
+  // Set up proc for stride scheduling
+  p->tickets = 10; // Default allocation to 10 tickets
+  p->stride = stride1 / p->tickets; // Stride is the inverse of tickets
+  p->pass = p->stride; // Pass is represented by stride
+  p->ticks = 0; // Hasn't been selected by scheduler yet
 
   return p;
 }
@@ -331,6 +337,7 @@ scheduler(void)
     sti();
 
     // Loop over process table looking for process to run.
+    /* Comment the current scheduler code out
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
@@ -351,10 +358,75 @@ scheduler(void)
       c->proc = 0;
     }
     release(&ptable.lock);
+    */
+    acquire(&ptable.lock);
+    p = minproc(); // Retrieve minimum pass proc and schedule it
+    if (p != 0) { // A proc was found
+      // Update pass and schedule the proc
+      p->pass += p->stride;
+      ++p->ticks; // Program was scheduled to run, so increment ticks
 
+      c->proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+      swtch(&(c->scheduler), p->context);
+      switchkvm();
+      
+      // Process is done running for now.
+      c->proc = 0;
+      release(&ptable.lock);
+    }
   }
 }
 
+/*
+ * Author: FSt. J
+ * Comments: helper function to return the proc with minimum pass
+ *
+*/
+struct proc*
+minproc(void)
+{
+  struct proc *p; // For loop iteration
+  struct proc *retProc = 0;
+  int firstProc = 1;  
+  int currMin;
+
+  // Loop through the proc table and find the proc with the lowest pass value
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state != RUNNABLE) {
+      continue;
+    }
+    if(p->state != UNUSED) { 
+      // If we get here, a proc has been allocated
+      if (firstProc) {
+        firstProc = 0;
+        currMin = p->pass;
+        retProc = p;
+      }
+      else if (p->pass < currMin) {
+        currMin = p->pass;
+        retProc = p;
+      }
+    }
+  }
+  return retProc;
+}
+
+/* 
+ * Author: FSt. J
+ * Comments: Implement the set priority function
+ *
+*/
+void
+set_tickets(int tickets)
+{
+  struct proc *p = myproc();
+  p->tickets = tickets;
+  p->stride = stride1 / tickets;
+  p->pass = p->stride;
+}
+   
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
 // intena because intena is a property of this
