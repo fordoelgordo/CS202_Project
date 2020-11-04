@@ -130,13 +130,14 @@ static int (*syscalls[])(void) = {
 [SYS_set_tickets] sys_set_tickets,
 };
 
+// This is called whenever a process performs a system call
 void
 syscall(void)
 {
   int num;
   struct proc *curproc = myproc();
-
   num = curproc->tf->eax;
+
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     curproc->tf->eax = syscalls[num]();
   } else {
