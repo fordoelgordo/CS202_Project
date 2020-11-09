@@ -89,3 +89,18 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+/*
+ * Author: FSt. J
+ * Comments: Implement set_tickets system call
+ *
+*/
+int
+sys_set_tickets(void)
+{
+  int n;
+  if(argint(0,&n) < 0)
+    return -1;
+  set_tickets(n);
+  return 0;
+}

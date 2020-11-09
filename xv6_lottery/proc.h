@@ -49,7 +49,11 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int tickets;		       // Ticket allocation per process, we'll default to 2
+  int ticks;		       // Track how many times a process was scheduled to run
 };
+
+int totaltickets(void); // Will use to define the total number of tickets in the system
 
 // Process memory is laid out contiguously, low addresses first:
 //   text

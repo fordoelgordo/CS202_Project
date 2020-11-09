@@ -6,6 +6,8 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "rand.h"
+#include "date.h" // So we can utilize rtcdate
 
 struct {
   struct spinlock lock;
@@ -20,10 +22,15 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+struct rtcdate* r;
+
 void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  // Set the random seed generator upon proc init
+  cmostime(r); // Update the time struct
+  init_genrand(r->second + r->minute + r->hour + r->day);
 }
 
 // Must be called with interrupts disabled
@@ -88,7 +95,8 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
-
+  p->tickets = 10; // Set default ticket allocation to 10 for all new processes
+  p->ticks = 0; // Haven't been scheduled yet
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -319,26 +327,71 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+
+/*
+ * Author: FSt.J
+ * Comments: implement int totaltickets(void)
+ *
+*/
+int 
+totaltickets(void)
+{
+  struct proc* p;
+  int totaltickets = 0;
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->state == RUNNABLE) {
+      totaltickets += p->tickets;
+    }
+  }
+  return totaltickets;
+}
+
+// Lottery scheduler updates here 
 void
 scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
+  int foundproc = 1;
+  int count = 0;
+  long winningticket = 0; // Because get_randint31() is long
+  int totaltix = 0;   
   
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
+    if (!foundproc) {
+      hlt(); // Halt processor if we haven't found a proc with the winning ticket yet
+    }
+    foundproc = 0;
+
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+    
+    // Reset the proc variables to ensure the proc table is searched from top to bottom each time
+    winningticket = 0;
+    count = 0;
+    totaltix = 0;
+
+    // Assign variables
+    totaltix = totaltickets();
+    winningticket = genrand_int31() % totaltix; // Ensure random number b/n [0, totaltickets - 1]
+
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+      count += p->tickets;
+      if (count <= winningticket) {
+        continue;
+      }
+     
+      // If we get here, we've found the proc with the winning ticket
+      foundproc = 1;
+      p->ticks += 1; // Update number of times the proc has been scheduled
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
@@ -355,6 +408,17 @@ scheduler(void)
   }
 }
 
+/*
+ * Author: FSt. J
+ * Comments: implement set_tickets function
+ *
+*/
+void
+set_tickets(int tickets)
+{
+  struct proc* p = myproc();
+  p->tickets = tickets;
+}
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
 // intena because intena is a property of this
@@ -500,6 +564,8 @@ kill(int pid)
 // Print a process listing to console.  For debugging.
 // Runs when user types ^P on console.
 // No lock to avoid wedging a stuck machine further.
+
+// Editing procdump to print tickets and ticks stats
 void
 procdump(void)
 {
@@ -523,7 +589,7 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("%d %s %s", p->pid, state, p->name);
+    cprintf("%d %s %s %d %d", p->pid, state, p->name, p->tickets, p->ticks);
     if(p->state == SLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)
