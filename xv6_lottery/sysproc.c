@@ -104,3 +104,13 @@ sys_set_tickets(void)
   set_tickets(n);
   return 0;
 }
+
+// Fill out a processes_info struct
+int
+sys_getprocessesinfo(void)
+{
+  struct processes_info  *p;
+  if(argptr(1, (void*)&p, sizeof(*p)) < 0)
+    return -1;
+  return getprocessesinfo(p);
+}
