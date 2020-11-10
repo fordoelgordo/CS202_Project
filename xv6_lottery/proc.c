@@ -29,8 +29,8 @@ pinit(void)
 {
   initlock(&ptable.lock, "ptable");
   // Set the random seed generator upon proc init
-  cmostime(r); // Update the time struct
-  init_genrand(r->second + r->minute + r->hour + r->day);
+  //cmostime(r); // Update the time struct
+  //init_genrand(r->second + r->minute + r->hour + r->day);
 }
 
 // Must be called with interrupts disabled
@@ -354,19 +354,24 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  int foundproc = 1;
+  //int foundproc = 1;
   int count = 0;
   long winningticket = 0; // Because get_randint31() is long
   int totaltix = 0;   
+
+  // Set the random seed
+  init_genrand(123);
   
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
+    /* FIXME
     if (!foundproc) {
       hlt(); // Halt processor if we haven't found a proc with the winning ticket yet
     }
     foundproc = 0;
+    */
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
@@ -378,20 +383,20 @@ scheduler(void)
 
     // Assign variables
     totaltix = totaltickets();
-    winningticket = genrand_int31() % totaltix; // Ensure random number b/n [0, totaltickets - 1]
+    winningticket = genrand_int31() % (totaltix + 1); // Ensure random number b/n [0, totaltickets - 1]
 
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
 
       count += p->tickets;
-      if (count <= winningticket) {
+      if (count < winningticket) {
         continue;
       }
      
       // If we get here, we've found the proc with the winning ticket
-      foundproc = 1;
-      p->ticks += 1; // Update number of times the proc has been scheduled
+      //foundproc = 1;
+      ++p->ticks; // Update number of times the proc has been scheduled
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
@@ -598,3 +603,28 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+// Code for getprocessesinfo
+int
+getprocessesinfo(struct processes_info* pi)
+{
+  struct proc* p;
+  int i = 0;
+  pi->num_processes = 0;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if(p->state != UNUSED) {
+      ++pi->num_processes;
+      pi->pids[i] = p->pid;
+      pi->ticks[i] = p->ticks;
+      pi->tickets[i] = p->tickets;
+      ++i;
+      cprintf("Name: %s\t PID: %d\t Tickets: %d\t Ticks: %d\n", p->name, p->pid, p->tickets, p->ticks);
+    }
+  }
+  release(&ptable.lock);
+  if (pi->num_processes < 0 || pi->num_processes > NPROC)
+    return -1;
+  return 0;
+} 

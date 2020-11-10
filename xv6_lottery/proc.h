@@ -55,6 +55,12 @@ struct proc {
 
 int totaltickets(void); // Will use to define the total number of tickets in the system
 
+struct processes_info {
+  int num_processes;
+  int pids[NPROC];
+  int ticks[NPROC];
+  int tickets[NPROC];
+};
 // Process memory is laid out contiguously, low addresses first:
 //   text
 //   original data and bss
