@@ -1,0 +1,450 @@
+diff --git a/Makefile b/Makefile
+index 55ec69b..9a3f438 100644
+--- a/Makefile
++++ b/Makefile
+@@ -182,8 +182,11 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
+-	_processlist\
+-	_lotterytest\
++        _lab2\
++	_prog1\
++	_prog2\
++	_prog3\
++	#_processlist\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+@@ -253,7 +256,7 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
+ EXTRA=\
+ 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
+ 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\
+-	printf.c umalloc.c processlist.c lotterytest.c\
++	printf.c umalloc.c lab2.c prog1.c prog2.c prog3.c\
+ 	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
+ 	.gdbinit.tmpl gdbutil\
+ 
+diff --git a/defs.h b/defs.h
+index c06df9e..5a1cb1d 100644
+--- a/defs.h
++++ b/defs.h
+@@ -122,7 +122,9 @@ int             wait(void);
+ void            wakeup(void*);
+ void            yield(void);
+ void		set_tickets(int);
+-int		getprocessesinfo(struct processes_info*);
++int		getprocessesinfo(void);
++void		printinfo(void); // The def is void, the user call is int
++void            updatestats(void); // Will run this on each schedule to update the running time stats of the proc
+ 
+ // swtch.S
+ void            swtch(struct context**, struct context*);
+diff --git a/proc.c b/proc.c
+index 8117a38..ccbfbed 100644
+--- a/proc.c
++++ b/proc.c
+@@ -23,6 +23,7 @@ extern void trapret(void);
+ static void wakeup1(void *chan);
+ 
+ struct rtcdate* r;
++int totaltix = 0; // Global total tickets variable
+ 
+ void
+ pinit(void)
+@@ -96,7 +97,11 @@ found:
+   p->state = EMBRYO;
+   p->pid = nextpid++;
+   p->tickets = 10; // Set default ticket allocation to 10 for all new processes
+-  p->ticks = 0; // Haven't been scheduled yet
++  p->runtime = 0; // Hasn't run yet
++  p->waitingtime = 0; // Hasn't been waiting yet
++  p->ticks = ticks;
++  p->sleeptime = 0;
++  p->isrun = 0; // Hasn't been scheduled yet
+   release(&ptable.lock);
+ 
+   // Allocate kernel stack.
+@@ -303,7 +308,14 @@ wait(void)
+         p->name[0] = 0;
+         p->killed = 0;
+         p->state = UNUSED;
+-        release(&ptable.lock);
++        // Reset statistics on zombie
++        p->runtime = 0;
++	p->tickets = 0;
++	p->waitingtime = 0;
++	p->isrun = 0;
++	p->ticks = 0;
++        p->sleeptime = 0;
++	release(&ptable.lock);
+         return pid;
+       }
+     }
+@@ -354,10 +366,8 @@ scheduler(void)
+   struct proc *p;
+   struct cpu *c = mycpu();
+   c->proc = 0;
+-  //int foundproc = 1;
+   int count = 0;
+   long winningticket = 0; // Because get_randint31() is long
+-  int totaltix = 0;   
+ 
+   // Set the random seed
+   init_genrand(123);
+@@ -366,13 +376,6 @@ scheduler(void)
+     // Enable interrupts on this processor.
+     sti();
+ 
+-    /* FIXME
+-    if (!foundproc) {
+-      hlt(); // Halt processor if we haven't found a proc with the winning ticket yet
+-    }
+-    foundproc = 0;
+-    */
+-
+     // Loop over process table looking for process to run.
+     acquire(&ptable.lock);
+     
+@@ -396,17 +399,25 @@ scheduler(void)
+      
+       // If we get here, we've found the proc with the winning ticket
+       //foundproc = 1;
+-      ++p->ticks; // Update number of times the proc has been scheduled
+       c->proc = p;
+       switchuvm(p);
+       p->state = RUNNING;
+ 
++      // Now update run stats
++      p->isrun = 1;
++      //updatestats();
++      // Statistics update on trap
++
+       swtch(&(c->scheduler), p->context);
++      
++      // Proc no longer running here
++      p->isrun = 0;
+       switchkvm();
+ 
+       // Process is done running for now.
+       // It should have changed its p->state before coming back.
+       c->proc = 0;
++      break;
+     }
+     release(&ptable.lock);
+ 
+@@ -606,25 +617,76 @@ procdump(void)
+ 
+ // Code for getprocessesinfo
+ int
+-getprocessesinfo(struct processes_info* pi)
++getprocessesinfo(void)
++{
++  struct proc* p = myproc();
++  return p->ticks;
++}
++
++// Code for printinfo()
++void
++printinfo(void)
+ {
+   struct proc* p;
+-  int i = 0;
+-  pi->num_processes = 0;
++  struct pstatus stats;
+ 
+   acquire(&ptable.lock);
+-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+-    if(p->state != UNUSED) {
+-      ++pi->num_processes;
+-      pi->pids[i] = p->pid;
+-      pi->ticks[i] = p->ticks;
+-      pi->tickets[i] = p->tickets;
+-      ++i;
+-      cprintf("Name: %s\t PID: %d\t Tickets: %d\t Ticks: %d\n", p->name, p->pid, p->tickets, p->ticks);
++  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
++  {
++    const int i = p - ptable.proc;
++    if(p->state != UNUSED)
++    {
++	stats.pid[i] = p->pid;
++	stats.runtime[i] = p->runtime;
++	stats.waitingtime[i] = p->waitingtime;
++	stats.sleeptime[i] = p->sleeptime;
++	stats.tickets[i] = p->tickets;
++	stats.isrun[i] = p->isrun;
++	stats.state[i] = p->state;
++	stats.name[i] = p->name;
++     }
++  }
++  stats.totaltickets = totaltix;
++  cprintf("\f"); // Print form-feed character
++  cprintf("Lottery scheduling results\n");
++  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
++  {
++    const int i = p - ptable.proc;
++    if(stats.pid[i] != 0 && stats.name[i] == p->name && stats.state[i] != SLEEPING && stats.state[i] != ZOMBIE)
++    {
++      // Print the stats
++      cprintf("pid:%d (%s)\t tickets:%d\t executed:%d\t running?: %d\t waiting:%d\t sleeping:%d\t total:%d\t\n", 
++      stats.pid[i], stats.name[i], stats.tickets[i], stats.runtime[i], stats.isrun[i], stats.waitingtime[i], stats.sleeptime[i], stats.runtime[i] + stats.sleeptime[i] + stats.waitingtime[i]);   
+     }
+   }
+   release(&ptable.lock);
+-  if (pi->num_processes < 0 || pi->num_processes > NPROC)
+-    return -1;
+-  return 0;
+-} 
++}
++
++void
++updatestats(void)
++{
++  struct proc* p;
++  acquire(&ptable.lock);
++  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
++  {
++    switch(p->state)
++    {
++      case RUNNABLE:
++        ++p->waitingtime;
++        break;
++      case RUNNING:
++        ++p->runtime;
++        break;
++      case SLEEPING:
++        ++p->sleeptime;
++        break;
++      default:
++        ;
++    }
++  }
++  release(&ptable.lock);
++}
++ 
++
++
++
+diff --git a/proc.h b/proc.h
+index 9a64b84..112fbe9 100644
+--- a/proc.h
++++ b/proc.h
+@@ -51,16 +51,28 @@ struct proc {
+   char name[16];               // Process name (debugging)
+   int tickets;		       // Ticket allocation per process, we'll default to 2
+   int ticks;		       // Track how many times a process was scheduled to run
++  int isrun;		       // Check for proc running in CPU
++  int runtime;                // Compute the number of times the proc was run
++  int waitingtime;            // Compute the number of times the proc waited
++  int sleeptime;
+ };
+ 
+ int totaltickets(void); // Will use to define the total number of tickets in the system
+ 
+-struct processes_info {
+-  int num_processes;
+-  int pids[NPROC];
+-  int ticks[NPROC];
++// Allow proc table to be displayed externally
++struct pstatus
++{
++  enum procstate state[NPROC];
++  int pid[NPROC];
++  char* name[NPROC];
+   int tickets[NPROC];
++  int runtime[NPROC];
++  int waitingtime[NPROC];
++  int sleeptime[NPROC];
++  int isrun[NPROC];
++  int totaltickets; // Compute total tickets that are in the system
+ };
++
+ // Process memory is laid out contiguously, low addresses first:
+ //   text
+ //   original data and bss
+diff --git a/prog1.c b/prog1.c
+index b5ed18d..cc3060d 100644
+--- a/prog1.c
++++ b/prog1.c
+@@ -1,25 +1,19 @@
+ #include "types.h"
+-#include "stat.h"
+ #include "user.h"
+-#include "proc.h"
+-#include "param.h"
+-#include "mmu.h"
+ 
+ int main(int argc, char* argv[])
+ {
+-	// Set the number of tickets for the process
+-	struct processes_info p;
+-	set_tickets(500);
++	set_tickets(30);
+ 	int i,k;
+ 	const int loop = 43000;
+ 	for (i = 0; i < loop; ++i) {
+-		asm("nop");
+ 		for (k = 0; k < loop; ++k) {
+ 			asm("nop");
+ 		}
++		if (i % 1000 == 0) {
++			printinfo();	
++		}
+ 	}
+-	// Scheduling stats can be printed via procdump
+-        getprocessesinfo(&p);	
+ 	exit();
+ 
+ 	return 0;
+diff --git a/prog2.c b/prog2.c
+index 2c126eb..8d1ebd1 100644
+--- a/prog2.c
++++ b/prog2.c
+@@ -1,25 +1,18 @@
+ #include "types.h"
+-#include "stat.h"
+ #include "user.h"
+-#include "proc.h"
+-#include "param.h"
+-#include "mmu.h"
+ 
+ int main(int argc, char* argv[])
+ {
+-	// Set the number of tickets for the process
+-	struct processes_info p;
+-	set_tickets(400);
++	set_tickets(20);
+ 	int i,k;
+ 	const int loop = 43000;
+ 	for (i = 0; i < loop; ++i) {
+-		asm("nop");
+ 		for (k = 0; k < loop; ++k) {
+ 			asm("nop");
+ 		}
+ 	}
+-	// Scheduling statistics can be printed via procdump
+-	getprocessesinfo(&p);
++	// Print info and exit
++	printinfo();
+ 	exit();
+ 
+ 	return 0;
+diff --git a/prog3.c b/prog3.c
+index 9120d8c..1ca60b1 100644
+--- a/prog3.c
++++ b/prog3.c
+@@ -1,25 +1,18 @@
+ #include "types.h"
+-#include "stat.h"
+ #include "user.h"
+-#include "proc.h"
+-#include "param.h"
+-#include "mmu.h"
+ 
+ int main(int argc, char* argv[])
+ {
+-	// Set the number of tickets for the process
+-	struct processes_info p;
+-	set_tickets(100);
++	set_tickets(10);
+ 	int i,k;
+ 	const int loop = 43000;
+ 	for (i = 0; i < loop; ++i) {
+-		asm("nop");
+ 		for (k = 0; k < loop; ++k) {
+ 			asm("nop");
+ 		}
+ 	}
+-	// Scheduling statistics can be printed via procdump
+-	getprocessesinfo(&p);
++	// Print stats
++	printinfo();
+ 	exit();
+ 
+ 	return 0;
+diff --git a/syscall.c b/syscall.c
+index 0900e3b..d09d0df 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -105,6 +105,7 @@ extern int sys_write(void);
+ extern int sys_uptime(void);
+ extern int sys_set_tickets(void);
+ extern int sys_getprocessesinfo(void);
++extern int sys_printinfo(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -130,6 +131,7 @@ static int (*syscalls[])(void) = {
+ [SYS_close]   sys_close,
+ [SYS_set_tickets] sys_set_tickets,
+ [SYS_getprocessesinfo] sys_getprocessesinfo,
++[SYS_printinfo] sys_printinfo,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index 26dd412..cdc76c5 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -22,3 +22,4 @@
+ #define SYS_close  21
+ #define SYS_set_tickets 22
+ #define SYS_getprocessesinfo 23
++#define SYS_printinfo 24
+diff --git a/sysproc.c b/sysproc.c
+index fa9d9ca..1e15641 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -109,8 +109,13 @@ sys_set_tickets(void)
+ int
+ sys_getprocessesinfo(void)
+ {
+-  struct processes_info  *p;
+-  if(argptr(1, (void*)&p, sizeof(*p)) < 0)
+-    return -1;
+-  return getprocessesinfo(p);
++  return getprocessesinfo();
++}
++
++// Print proc info
++int
++sys_printinfo(void)
++{
++  printinfo();
++  return 0;
+ }
+diff --git a/trap.c b/trap.c
+index 41c66eb..a911664 100644
+--- a/trap.c
++++ b/trap.c
+@@ -51,6 +51,7 @@ trap(struct trapframe *tf)
+     if(cpuid() == 0){
+       acquire(&tickslock);
+       ticks++;
++      updatestats();
+       wakeup(&ticks);
+       release(&tickslock);
+     }
+diff --git a/user.h b/user.h
+index e0ad5d6..ea9f4b3 100644
+--- a/user.h
++++ b/user.h
+@@ -25,7 +25,8 @@ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+ int set_tickets(int);
+-int getprocessesinfo(struct processes_info*);
++int getprocessesinfo(void);
++int printinfo(void);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/usys.S b/usys.S
+index ce2bd15..99776ce 100644
+--- a/usys.S
++++ b/usys.S
+@@ -31,3 +31,4 @@ SYSCALL(sleep)
+ SYSCALL(uptime)
+ SYSCALL(set_tickets)
+ SYSCALL(getprocessesinfo)
++SYSCALL(printinfo)

@@ -109,8 +109,13 @@ sys_set_tickets(void)
 int
 sys_getprocessesinfo(void)
 {
-  struct processes_info  *p;
-  if(argptr(1, (void*)&p, sizeof(*p)) < 0)
-    return -1;
-  return getprocessesinfo(p);
+  return getprocessesinfo();
+}
+
+// Print proc info
+int
+sys_printinfo(void)
+{
+  printinfo();
+  return 0;
 }

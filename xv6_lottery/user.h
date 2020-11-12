@@ -25,7 +25,8 @@ char* sbrk(int);
 int sleep(int);
 int uptime(void);
 int set_tickets(int);
-int getprocessesinfo(struct processes_info*);
+int getprocessesinfo(void);
+int printinfo(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

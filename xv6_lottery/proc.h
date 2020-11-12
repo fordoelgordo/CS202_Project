@@ -51,16 +51,28 @@ struct proc {
   char name[16];               // Process name (debugging)
   int tickets;		       // Ticket allocation per process, we'll default to 2
   int ticks;		       // Track how many times a process was scheduled to run
+  int isrun;		       // Check for proc running in CPU
+  int runtime;                // Compute the number of times the proc was run
+  int waitingtime;            // Compute the number of times the proc waited
+  int sleeptime;
 };
 
 int totaltickets(void); // Will use to define the total number of tickets in the system
 
-struct processes_info {
-  int num_processes;
-  int pids[NPROC];
-  int ticks[NPROC];
+// Allow proc table to be displayed externally
+struct pstatus
+{
+  enum procstate state[NPROC];
+  int pid[NPROC];
+  char* name[NPROC];
   int tickets[NPROC];
+  int runtime[NPROC];
+  int waitingtime[NPROC];
+  int sleeptime[NPROC];
+  int isrun[NPROC];
+  int totaltickets; // Compute total tickets that are in the system
 };
+
 // Process memory is laid out contiguously, low addresses first:
 //   text
 //   original data and bss

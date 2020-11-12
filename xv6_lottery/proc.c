@@ -23,6 +23,7 @@ extern void trapret(void);
 static void wakeup1(void *chan);
 
 struct rtcdate* r;
+int totaltix = 0; // Global total tickets variable
 
 void
 pinit(void)
@@ -96,7 +97,11 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
   p->tickets = 10; // Set default ticket allocation to 10 for all new processes
-  p->ticks = 0; // Haven't been scheduled yet
+  p->runtime = 0; // Hasn't run yet
+  p->waitingtime = 0; // Hasn't been waiting yet
+  p->ticks = ticks;
+  p->sleeptime = 0;
+  p->isrun = 0; // Hasn't been scheduled yet
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -303,7 +308,14 @@ wait(void)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
-        release(&ptable.lock);
+        // Reset statistics on zombie
+        p->runtime = 0;
+	p->tickets = 0;
+	p->waitingtime = 0;
+	p->isrun = 0;
+	p->ticks = 0;
+        p->sleeptime = 0;
+	release(&ptable.lock);
         return pid;
       }
     }
@@ -354,10 +366,8 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  //int foundproc = 1;
   int count = 0;
   long winningticket = 0; // Because get_randint31() is long
-  int totaltix = 0;   
 
   // Set the random seed
   init_genrand(123);
@@ -365,13 +375,6 @@ scheduler(void)
   for(;;){
     // Enable interrupts on this processor.
     sti();
-
-    /* FIXME
-    if (!foundproc) {
-      hlt(); // Halt processor if we haven't found a proc with the winning ticket yet
-    }
-    foundproc = 0;
-    */
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
@@ -396,17 +399,25 @@ scheduler(void)
      
       // If we get here, we've found the proc with the winning ticket
       //foundproc = 1;
-      ++p->ticks; // Update number of times the proc has been scheduled
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
 
+      // Now update run stats
+      p->isrun = 1;
+      //updatestats();
+      // Statistics update on trap
+
       swtch(&(c->scheduler), p->context);
+      
+      // Proc no longer running here
+      p->isrun = 0;
       switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
+      break;
     }
     release(&ptable.lock);
 
@@ -606,25 +617,76 @@ procdump(void)
 
 // Code for getprocessesinfo
 int
-getprocessesinfo(struct processes_info* pi)
+getprocessesinfo(void)
+{
+  struct proc* p = myproc();
+  return p->ticks;
+}
+
+// Code for printinfo()
+void
+printinfo(void)
 {
   struct proc* p;
-  int i = 0;
-  pi->num_processes = 0;
+  struct pstatus stats;
 
   acquire(&ptable.lock);
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-    if(p->state != UNUSED) {
-      ++pi->num_processes;
-      pi->pids[i] = p->pid;
-      pi->ticks[i] = p->ticks;
-      pi->tickets[i] = p->tickets;
-      ++i;
-      cprintf("Name: %s\t PID: %d\t Tickets: %d\t Ticks: %d\n", p->name, p->pid, p->tickets, p->ticks);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    const int i = p - ptable.proc;
+    if(p->state != UNUSED)
+    {
+	stats.pid[i] = p->pid;
+	stats.runtime[i] = p->runtime;
+	stats.waitingtime[i] = p->waitingtime;
+	stats.sleeptime[i] = p->sleeptime;
+	stats.tickets[i] = p->tickets;
+	stats.isrun[i] = p->isrun;
+	stats.state[i] = p->state;
+	stats.name[i] = p->name;
+     }
+  }
+  stats.totaltickets = totaltix;
+  cprintf("\f"); // Print form-feed character
+  cprintf("Lottery scheduling results\n");
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    const int i = p - ptable.proc;
+    if(stats.pid[i] != 0 && stats.name[i] == p->name && stats.state[i] != SLEEPING && stats.state[i] != ZOMBIE)
+    {
+      // Print the stats
+      cprintf("pid:%d (%s)\t tickets:%d\t executed:%d\t running?: %d\t waiting:%d\t sleeping:%d\t total:%d\t\n", 
+      stats.pid[i], stats.name[i], stats.tickets[i], stats.runtime[i], stats.isrun[i], stats.waitingtime[i], stats.sleeptime[i], stats.runtime[i] + stats.sleeptime[i] + stats.waitingtime[i]);   
     }
   }
   release(&ptable.lock);
-  if (pi->num_processes < 0 || pi->num_processes > NPROC)
-    return -1;
-  return 0;
-} 
+}
+
+void
+updatestats(void)
+{
+  struct proc* p;
+  acquire(&ptable.lock);
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    switch(p->state)
+    {
+      case RUNNABLE:
+        ++p->waitingtime;
+        break;
+      case RUNNING:
+        ++p->runtime;
+        break;
+      case SLEEPING:
+        ++p->sleeptime;
+        break;
+      default:
+        ;
+    }
+  }
+  release(&ptable.lock);
+}
+ 
+
+
+
