@@ -105,13 +105,6 @@ sys_set_tickets(void)
   return 0;
 }
 
-// Fill out a processes_info struct
-int
-sys_getprocessesinfo(void)
-{
-  return getprocessesinfo();
-}
-
 // Print proc info
 int
 sys_printinfo(void)

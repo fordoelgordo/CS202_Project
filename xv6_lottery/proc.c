@@ -6,8 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
-#include "rand.h"
-#include "date.h" // So we can utilize rtcdate
+#include "rand.h" // To utilize the random generator functions
 
 struct {
   struct spinlock lock;
@@ -22,7 +21,6 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
-struct rtcdate* r;
 int totaltix = 0; // Global total tickets variable
 
 void
@@ -615,13 +613,6 @@ procdump(void)
   }
 }
 
-// Code for getprocessesinfo
-int
-getprocessesinfo(void)
-{
-  struct proc* p = myproc();
-  return p->ticks;
-}
 
 // Code for printinfo()
 void

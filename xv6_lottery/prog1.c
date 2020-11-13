@@ -10,7 +10,7 @@ int main(int argc, char* argv[])
 		for (k = 0; k < loop; ++k) {
 			asm("nop");
 		}
-		if (i % 1000 == 0) {
+		if (i % 5000 == 0) {
 			printinfo();	
 		}
 	}

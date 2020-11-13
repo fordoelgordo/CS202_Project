@@ -121,8 +121,7 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
-void		set_tickets(int);
-int		getprocessesinfo(void);
+void		set_tickets(int); // Set the ticket number of a proc
 void		printinfo(void); // The def is void, the user call is int
 void            updatestats(void); // Will run this on each schedule to update the running time stats of the proc
 

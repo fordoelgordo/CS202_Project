@@ -49,17 +49,17 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  int tickets;		       // Ticket allocation per process, we'll default to 2
-  int ticks;		       // Track how many times a process was scheduled to run
-  int isrun;		       // Check for proc running in CPU
-  int runtime;                // Compute the number of times the proc was run
-  int waitingtime;            // Compute the number of times the proc waited
-  int sleeptime;
+  int tickets;		       // Ticket allocation per process, we'll default to 10
+  int ticks;		       // Used to define the time the process was created
+  int isrun;		       // Check for proc running on the CPU
+  int runtime;                 // Compute the number of times the proc was run
+  int waitingtime;             // Compute the number of times the proc waited
+  int sleeptime;	       // Compute the number of times the proc slept
 };
 
 int totaltickets(void); // Will use to define the total number of tickets in the system
 
-// Allow proc table to be displayed externally
+// Track the statistics of all processes in the ptable
 struct pstatus
 {
   enum procstate state[NPROC];
