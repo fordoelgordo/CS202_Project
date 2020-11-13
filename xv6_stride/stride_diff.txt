@@ -1,0 +1,558 @@
+diff --git a/Makefile b/Makefile
+index 55ec69b..9a3f438 100644
+--- a/Makefile
++++ b/Makefile
+@@ -182,8 +182,11 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
+-	_processlist\
+-	_lotterytest\
++        _lab2\
++	_prog1\
++	_prog2\
++	_prog3\
++	#_processlist\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+@@ -253,7 +256,7 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
+ EXTRA=\
+ 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
+ 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\
+-	printf.c umalloc.c processlist.c lotterytest.c\
++	printf.c umalloc.c lab2.c prog1.c prog2.c prog3.c\
+ 	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
+ 	.gdbinit.tmpl gdbutil\
+ 
+diff --git a/defs.h b/defs.h
+index c06df9e..4b23271 100644
+--- a/defs.h
++++ b/defs.h
+@@ -121,8 +121,11 @@ void            userinit(void);
+ int             wait(void);
+ void            wakeup(void*);
+ void            yield(void);
+-void		set_tickets(int);
+-int		getprocessesinfo(struct processes_info*);
++void		set_tickets(int, struct proc* p); // Set the ticket number of a proc
++void		printinfo(void); // The def is void, the user call is int
++void            updatestats(void); // Will run this on each schedule to update the running time stats of the proc
++void		proc_init(struct proc* p); // Initialize a process' stride and pass values
++void 		proc_update(struct proc* p); // Update a process' pass value after scheduling
+ 
+ // swtch.S
+ void            swtch(struct context**, struct context*);
+diff --git a/proc.c b/proc.c
+index 8117a38..f97361a 100644
+--- a/proc.c
++++ b/proc.c
+@@ -6,8 +6,7 @@
+ #include "x86.h"
+ #include "proc.h"
+ #include "spinlock.h"
+-#include "rand.h"
+-#include "date.h" // So we can utilize rtcdate
++#include "rand.h" // To utilize the random generator functions
+ 
+ struct {
+   struct spinlock lock;
+@@ -22,7 +21,7 @@ extern void trapret(void);
+ 
+ static void wakeup1(void *chan);
+ 
+-struct rtcdate* r;
++int totaltix = 0; // Global total tickets variable
+ 
+ void
+ pinit(void)
+@@ -95,8 +94,12 @@ allocproc(void)
+ found:
+   p->state = EMBRYO;
+   p->pid = nextpid++;
+-  p->tickets = 10; // Set default ticket allocation to 10 for all new processes
+-  p->ticks = 0; // Haven't been scheduled yet
++  set_tickets(10 , p); // Default proc has 10 tickets, update stride and pass accordingly
++  p->runtime = 0; // Hasn't run yet
++  p->waitingtime = 0; // Hasn't been waiting yet
++  p->ticks = ticks;
++  p->sleeptime = 0;
++  p->isrun = 0; // Hasn't been scheduled yet
+   release(&ptable.lock);
+ 
+   // Allocate kernel stack.
+@@ -303,7 +306,14 @@ wait(void)
+         p->name[0] = 0;
+         p->killed = 0;
+         p->state = UNUSED;
+-        release(&ptable.lock);
++        // Reset statistics on zombie
++        p->runtime = 0;
++	set_tickets(0, p);
++        p->waitingtime = 0;
++	p->isrun = 0;
++	p->ticks = 0;
++        p->sleeptime = 0;
++	release(&ptable.lock);
+         return pid;
+       }
+     }
+@@ -351,65 +361,59 @@ totaltickets(void)
+ void
+ scheduler(void)
+ {
+-  struct proc *p;
++  struct proc* p;
+   struct cpu *c = mycpu();
+   c->proc = 0;
+-  //int foundproc = 1;
+-  int count = 0;
+-  long winningticket = 0; // Because get_randint31() is long
+-  int totaltix = 0;   
+-
+-  // Set the random seed
+-  init_genrand(123);
+-  
++  int minpass = stride1 * 2; // We assume the lowest ticket number assignable is 1, which means that proc will have 
++                             // pass value = stride1 initially.  Simiarly, we assume the most tickets a client can hold is stride1
++                             // initially, so their pass value would = 1 in that case 
+   for(;;){
+     // Enable interrupts on this processor.
+     sti();
+ 
+-    /* FIXME
+-    if (!foundproc) {
+-      hlt(); // Halt processor if we haven't found a proc with the winning ticket yet
+-    }
+-    foundproc = 0;
+-    */
+-
+     // Loop over process table looking for process to run.
+     acquire(&ptable.lock);
+     
+-    // Reset the proc variables to ensure the proc table is searched from top to bottom each time
+-    winningticket = 0;
+-    count = 0;
+-    totaltix = 0;
+-
+-    // Assign variables
+-    totaltix = totaltickets();
+-    winningticket = genrand_int31() % (totaltix + 1); // Ensure random number b/n [0, totaltickets - 1]
+-
++    // First we find the proc with the minimum pass value
++    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
++      if(p->state != RUNNABLE)
++        continue; // Don't count proc's that are not runnable
++      if(p->pass < minpass && p->pass > 0)
++        // Found minimum pass proc
++        minpass = p->pass;
++    }
++    release(&ptable.lock);
++    // We set q to the minimum pass proc, so run it
++    acquire(&ptable.lock);
+     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+       if(p->state != RUNNABLE)
+         continue;
+-
+-      count += p->tickets;
+-      if (count < winningticket) {
++      if(p->pass > minpass)
+         continue;
+-      }
+-     
+-      // If we get here, we've found the proc with the winning ticket
+-      //foundproc = 1;
+-      ++p->ticks; // Update number of times the proc has been scheduled
++    
++      // If we're here, we found the proc with the minimum pass
+       c->proc = p;
+       switchuvm(p);
+       p->state = RUNNING;
+ 
++      // Now update run stats, and update proc's pass value
++      p->isrun = 1;
++      proc_update(p);
++      // Statistics update on trap
++
+       swtch(&(c->scheduler), p->context);
++      
++      // Proc no longer running here
++      p->isrun = 0;
+       switchkvm();
+ 
+       // Process is done running for now.
+       // It should have changed its p->state before coming back.
+       c->proc = 0;
++      break;
+     }
++    minpass += stride1 + 1; // Update the minimum pass to ensure we find a min pass proc next time around 
+     release(&ptable.lock);
+-
+   }
+ }
+ 
+@@ -419,10 +423,10 @@ scheduler(void)
+  *
+ */
+ void
+-set_tickets(int tickets)
++set_tickets(int tickets, struct proc* p)
+ {
+-  struct proc* p = myproc();
+   p->tickets = tickets;
++  proc_init(p);
+ }
+ // Enter scheduler.  Must hold only ptable.lock
+ // and have changed proc->state. Saves and restores
+@@ -604,27 +608,93 @@ procdump(void)
+   }
+ }
+ 
+-// Code for getprocessesinfo
+-int
+-getprocessesinfo(struct processes_info* pi)
++/*
++ * Author: FSt. J
++ * Comments: additional functions for implementing stride scheduling
++ *
++*/
++// Code for printinfo()
++void
++printinfo(void)
+ {
+   struct proc* p;
+-  int i = 0;
+-  pi->num_processes = 0;
++  struct pstatus stats;
+ 
+   acquire(&ptable.lock);
+-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+-    if(p->state != UNUSED) {
+-      ++pi->num_processes;
+-      pi->pids[i] = p->pid;
+-      pi->ticks[i] = p->ticks;
+-      pi->tickets[i] = p->tickets;
+-      ++i;
+-      cprintf("Name: %s\t PID: %d\t Tickets: %d\t Ticks: %d\n", p->name, p->pid, p->tickets, p->ticks);
++  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
++  {
++    const int i = p - ptable.proc;
++    if(p->state != UNUSED)
++    {
++	stats.pid[i] = p->pid;
++	stats.runtime[i] = p->runtime;
++	stats.waitingtime[i] = p->waitingtime;
++	stats.sleeptime[i] = p->sleeptime;
++	stats.tickets[i] = p->tickets;
++	stats.isrun[i] = p->isrun;
++	stats.state[i] = p->state;
++	stats.name[i] = p->name;
++     }
++  }
++  stats.totaltickets = totaltix;
++  cprintf("\f"); // Print form-feed character
++  cprintf("Stride scheduling results\n");
++  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
++  {
++    const int i = p - ptable.proc;
++    if(stats.pid[i] != 0 && stats.name[i] == p->name && stats.state[i] != SLEEPING && stats.state[i] != ZOMBIE)
++    {
++      // Print the stats
++      cprintf("pid:%d (%s)\t tickets:%d\t executed:%d\t running?: %d\t waiting:%d\t sleeping:%d\t total:%d\t\n", 
++      stats.pid[i], stats.name[i], stats.tickets[i], stats.runtime[i], stats.isrun[i], stats.waitingtime[i], stats.sleeptime[i], stats.runtime[i] + stats.sleeptime[i] + stats.waitingtime[i]);   
+     }
+   }
+   release(&ptable.lock);
+-  if (pi->num_processes < 0 || pi->num_processes > NPROC)
+-    return -1;
+-  return 0;
+-} 
++}
++
++// Code for updating proc running stats
++void
++updatestats(void)
++{
++  struct proc* p;
++  acquire(&ptable.lock);
++  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
++  {
++    switch(p->state)
++    {
++      case RUNNABLE:
++        ++p->waitingtime;
++        break;
++      case RUNNING:
++        ++p->runtime;
++        break;
++      case SLEEPING:
++        ++p->sleeptime;
++        break;
++      default:
++        ;
++    }
++  }
++  release(&ptable.lock);
++}
++ 
++// Helper functions for stride scheduling
++void
++proc_init(struct proc* p)
++{
++  if (p->tickets == 0) {
++    p->stride = 0;
++    p->pass = -1;
++  }
++  else
++  {
++    p->stride = stride1 / p->tickets;
++    p->pass = p->stride;
++  }
++}
++
++void
++proc_update(struct proc* p)
++{
++  p->pass += p->stride;
++}
+diff --git a/proc.h b/proc.h
+index 9a64b84..58ccf49 100644
+--- a/proc.h
++++ b/proc.h
+@@ -49,18 +49,34 @@ struct proc {
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
+-  int tickets;		       // Ticket allocation per process, we'll default to 2
+-  int ticks;		       // Track how many times a process was scheduled to run
++  int tickets;		       // Ticket allocation per process, we'll default to 10
++  int ticks;		       // Used to define the time the process was created
++  int isrun;		       // Check for proc running on the CPU
++  int runtime;                 // Compute the number of times the proc was run
++  int waitingtime;             // Compute the number of times the proc waited
++  int sleeptime;	       // Compute the number of times the proc slept
++  int stride;		       // per-process stride value
++  int pass;		       // per-process pass value
+ };
+ 
++#define stride1 10000	       // large integer value for computing stride (instead of having a float stride)
++
+ int totaltickets(void); // Will use to define the total number of tickets in the system
+ 
+-struct processes_info {
+-  int num_processes;
+-  int pids[NPROC];
+-  int ticks[NPROC];
++// Track the statistics of all processes in the ptable
++struct pstatus
++{
++  enum procstate state[NPROC];
++  int pid[NPROC];
++  char* name[NPROC];
+   int tickets[NPROC];
++  int runtime[NPROC];
++  int waitingtime[NPROC];
++  int sleeptime[NPROC];
++  int isrun[NPROC];
++  int totaltickets; // Compute total tickets that are in the system
+ };
++
+ // Process memory is laid out contiguously, low addresses first:
+ //   text
+ //   original data and bss
+diff --git a/prog1.c b/prog1.c
+index b5ed18d..27e717a 100644
+--- a/prog1.c
++++ b/prog1.c
+@@ -1,25 +1,19 @@
+ #include "types.h"
+-#include "stat.h"
+ #include "user.h"
+-#include "proc.h"
+-#include "param.h"
+-#include "mmu.h"
+ 
+ int main(int argc, char* argv[])
+ {
+-	// Set the number of tickets for the process
+-	struct processes_info p;
+-	set_tickets(500);
++	set_tickets(30);
+ 	int i,k;
+ 	const int loop = 43000;
+ 	for (i = 0; i < loop; ++i) {
+-		asm("nop");
+ 		for (k = 0; k < loop; ++k) {
+ 			asm("nop");
+ 		}
++		if (i % 5000 == 0) {
++			printinfo();	
++		}
+ 	}
+-	// Scheduling stats can be printed via procdump
+-        getprocessesinfo(&p);	
+ 	exit();
+ 
+ 	return 0;
+diff --git a/prog2.c b/prog2.c
+index 2c126eb..8d1ebd1 100644
+--- a/prog2.c
++++ b/prog2.c
+@@ -1,25 +1,18 @@
+ #include "types.h"
+-#include "stat.h"
+ #include "user.h"
+-#include "proc.h"
+-#include "param.h"
+-#include "mmu.h"
+ 
+ int main(int argc, char* argv[])
+ {
+-	// Set the number of tickets for the process
+-	struct processes_info p;
+-	set_tickets(400);
++	set_tickets(20);
+ 	int i,k;
+ 	const int loop = 43000;
+ 	for (i = 0; i < loop; ++i) {
+-		asm("nop");
+ 		for (k = 0; k < loop; ++k) {
+ 			asm("nop");
+ 		}
+ 	}
+-	// Scheduling statistics can be printed via procdump
+-	getprocessesinfo(&p);
++	// Print info and exit
++	printinfo();
+ 	exit();
+ 
+ 	return 0;
+diff --git a/prog3.c b/prog3.c
+index 9120d8c..1ca60b1 100644
+--- a/prog3.c
++++ b/prog3.c
+@@ -1,25 +1,18 @@
+ #include "types.h"
+-#include "stat.h"
+ #include "user.h"
+-#include "proc.h"
+-#include "param.h"
+-#include "mmu.h"
+ 
+ int main(int argc, char* argv[])
+ {
+-	// Set the number of tickets for the process
+-	struct processes_info p;
+-	set_tickets(100);
++	set_tickets(10);
+ 	int i,k;
+ 	const int loop = 43000;
+ 	for (i = 0; i < loop; ++i) {
+-		asm("nop");
+ 		for (k = 0; k < loop; ++k) {
+ 			asm("nop");
+ 		}
+ 	}
+-	// Scheduling statistics can be printed via procdump
+-	getprocessesinfo(&p);
++	// Print stats
++	printinfo();
+ 	exit();
+ 
+ 	return 0;
+diff --git a/syscall.c b/syscall.c
+index 0900e3b..7f7566e 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -104,7 +104,7 @@ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
+ extern int sys_set_tickets(void);
+-extern int sys_getprocessesinfo(void);
++extern int sys_printinfo(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -129,7 +129,7 @@ static int (*syscalls[])(void) = {
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
+ [SYS_set_tickets] sys_set_tickets,
+-[SYS_getprocessesinfo] sys_getprocessesinfo,
++[SYS_printinfo] sys_printinfo,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index 26dd412..ef0b9d8 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -21,4 +21,4 @@
+ #define SYS_mkdir  20
+ #define SYS_close  21
+ #define SYS_set_tickets 22
+-#define SYS_getprocessesinfo 23
++#define SYS_printinfo 24
+diff --git a/sysproc.c b/sysproc.c
+index fa9d9ca..098166c 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -101,16 +101,17 @@ sys_set_tickets(void)
+   int n;
+   if(argint(0,&n) < 0)
+     return -1;
+-  set_tickets(n);
++  if (n < 1 || n > stride1)
++    return -1; // Invalid stride value
++  struct proc* p = myproc();
++  set_tickets(n, p);
+   return 0;
+ }
+ 
+-// Fill out a processes_info struct
++// Print proc info
+ int
+-sys_getprocessesinfo(void)
++sys_printinfo(void)
+ {
+-  struct processes_info  *p;
+-  if(argptr(1, (void*)&p, sizeof(*p)) < 0)
+-    return -1;
+-  return getprocessesinfo(p);
++  printinfo();
++  return 0;
+ }
+diff --git a/trap.c b/trap.c
+index 41c66eb..a911664 100644
+--- a/trap.c
++++ b/trap.c
+@@ -51,6 +51,7 @@ trap(struct trapframe *tf)
+     if(cpuid() == 0){
+       acquire(&tickslock);
+       ticks++;
++      updatestats();
+       wakeup(&ticks);
+       release(&tickslock);
+     }
+diff --git a/user.h b/user.h
+index e0ad5d6..eb7078d 100644
+--- a/user.h
++++ b/user.h
+@@ -25,7 +25,7 @@ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+ int set_tickets(int);
+-int getprocessesinfo(struct processes_info*);
++int printinfo(void);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/usys.S b/usys.S
+index ce2bd15..d196e89 100644
+--- a/usys.S
++++ b/usys.S
+@@ -30,4 +30,4 @@ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
+ SYSCALL(set_tickets)
+-SYSCALL(getprocessesinfo)
++SYSCALL(printinfo)
