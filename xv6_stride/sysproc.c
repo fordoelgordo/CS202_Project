@@ -89,3 +89,29 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+/*
+ * Author: FSt. J
+ * Comments: Implement set_tickets system call
+ *
+*/
+int
+sys_set_tickets(void)
+{
+  int n;
+  if(argint(0,&n) < 0)
+    return -1;
+  if (n < 1 || n > stride1)
+    return -1; // Invalid stride value
+  struct proc* p = myproc();
+  set_tickets(n, p);
+  return 0;
+}
+
+// Print proc info
+int
+sys_printinfo(void)
+{
+  printinfo();
+  return 0;
+}

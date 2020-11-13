@@ -9,6 +9,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct processes_info;
 
 // bio.c
 void            binit(void);
@@ -120,6 +121,11 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+void		set_tickets(int, struct proc* p); // Set the ticket number of a proc
+void		printinfo(void); // The def is void, the user call is int
+void            updatestats(void); // Will run this on each schedule to update the running time stats of the proc
+void		proc_init(struct proc* p); // Initialize a process' stride and pass values
+void 		proc_update(struct proc* p); // Update a process' pass value after scheduling
 
 // swtch.S
 void            swtch(struct context**, struct context*);

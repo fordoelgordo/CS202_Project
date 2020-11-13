@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "rand.h" // To utilize the random generator functions
 
 struct {
   struct spinlock lock;
@@ -20,10 +21,15 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+int totaltix = 0; // Global total tickets variable
+
 void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  // Set the random seed generator upon proc init
+  //cmostime(r); // Update the time struct
+  //init_genrand(r->second + r->minute + r->hour + r->day);
 }
 
 // Must be called with interrupts disabled
@@ -88,7 +94,12 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
-
+  set_tickets(10 , p); // Default proc has 10 tickets, update stride and pass accordingly
+  p->runtime = 0; // Hasn't run yet
+  p->waitingtime = 0; // Hasn't been waiting yet
+  p->ticks = ticks;
+  p->sleeptime = 0;
+  p->isrun = 0; // Hasn't been scheduled yet
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -295,7 +306,14 @@ wait(void)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
-        release(&ptable.lock);
+        // Reset statistics on zombie
+        p->runtime = 0;
+	set_tickets(0, p);
+        p->waitingtime = 0;
+	p->isrun = 0;
+	p->ticks = 0;
+        p->sleeptime = 0;
+	release(&ptable.lock);
         return pid;
       }
     }
@@ -319,42 +337,97 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+
+/*
+ * Author: FSt.J
+ * Comments: implement int totaltickets(void)
+ *
+*/
+int 
+totaltickets(void)
+{
+  struct proc* p;
+  int totaltickets = 0;
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->state == RUNNABLE) {
+      totaltickets += p->tickets;
+    }
+  }
+  return totaltickets;
+}
+
+// Lottery scheduler updates here 
 void
 scheduler(void)
 {
-  struct proc *p;
+  struct proc* p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+  int minpass = stride1 * 2; // We assume the lowest ticket number assignable is 1, which means that proc will have 
+                             // pass value = stride1 initially.  Simiarly, we assume the most tickets a client can hold is stride1
+                             // initially, so their pass value would = 1 in that case 
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+    
+    // First we find the proc with the minimum pass value
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue; // Don't count proc's that are not runnable
+      if(p->pass < minpass && p->pass > 0)
+        // Found minimum pass proc
+        minpass = p->pass;
+    }
+    release(&ptable.lock);
+    // We set q to the minimum pass proc, so run it
+    acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
-
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+      if(p->pass > minpass)
+        continue;
+    
+      // If we're here, we found the proc with the minimum pass
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
 
+      // Now update run stats, and update proc's pass value
+      p->isrun = 1;
+      proc_update(p);
+      // Statistics update on trap
+
       swtch(&(c->scheduler), p->context);
+      
+      // Proc no longer running here
+      p->isrun = 0;
       switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
+      break;
     }
+    minpass += stride1 + 1; // Update the minimum pass to ensure we find a min pass proc next time around 
     release(&ptable.lock);
-
   }
 }
 
+/*
+ * Author: FSt. J
+ * Comments: implement set_tickets function
+ *
+*/
+void
+set_tickets(int tickets, struct proc* p)
+{
+  p->tickets = tickets;
+  proc_init(p);
+}
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
 // intena because intena is a property of this
@@ -500,6 +573,8 @@ kill(int pid)
 // Print a process listing to console.  For debugging.
 // Runs when user types ^P on console.
 // No lock to avoid wedging a stuck machine further.
+
+// Editing procdump to print tickets and ticks stats
 void
 procdump(void)
 {
@@ -523,7 +598,7 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("%d %s %s", p->pid, state, p->name);
+    cprintf("%d %s %s %d %d", p->pid, state, p->name, p->tickets, p->ticks);
     if(p->state == SLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)
@@ -531,4 +606,95 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+/*
+ * Author: FSt. J
+ * Comments: additional functions for implementing stride scheduling
+ *
+*/
+// Code for printinfo()
+void
+printinfo(void)
+{
+  struct proc* p;
+  struct pstatus stats;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    const int i = p - ptable.proc;
+    if(p->state != UNUSED)
+    {
+	stats.pid[i] = p->pid;
+	stats.runtime[i] = p->runtime;
+	stats.waitingtime[i] = p->waitingtime;
+	stats.sleeptime[i] = p->sleeptime;
+	stats.tickets[i] = p->tickets;
+	stats.isrun[i] = p->isrun;
+	stats.state[i] = p->state;
+	stats.name[i] = p->name;
+     }
+  }
+  stats.totaltickets = totaltix;
+  cprintf("\f"); // Print form-feed character
+  cprintf("Stride scheduling results\n");
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    const int i = p - ptable.proc;
+    if(stats.pid[i] != 0 && stats.name[i] == p->name && stats.state[i] != SLEEPING && stats.state[i] != ZOMBIE)
+    {
+      // Print the stats
+      cprintf("pid:%d (%s)\t tickets:%d\t executed:%d\t running?: %d\t waiting:%d\t sleeping:%d\t total:%d\t\n", 
+      stats.pid[i], stats.name[i], stats.tickets[i], stats.runtime[i], stats.isrun[i], stats.waitingtime[i], stats.sleeptime[i], stats.runtime[i] + stats.sleeptime[i] + stats.waitingtime[i]);   
+    }
+  }
+  release(&ptable.lock);
+}
+
+// Code for updating proc running stats
+void
+updatestats(void)
+{
+  struct proc* p;
+  acquire(&ptable.lock);
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    switch(p->state)
+    {
+      case RUNNABLE:
+        ++p->waitingtime;
+        break;
+      case RUNNING:
+        ++p->runtime;
+        break;
+      case SLEEPING:
+        ++p->sleeptime;
+        break;
+      default:
+        ;
+    }
+  }
+  release(&ptable.lock);
+}
+ 
+// Helper functions for stride scheduling
+void
+proc_init(struct proc* p)
+{
+  if (p->tickets == 0) {
+    p->stride = 0;
+    p->pass = -1;
+  }
+  else
+  {
+    p->stride = stride1 / p->tickets;
+    p->pass = p->stride;
+  }
+}
+
+void
+proc_update(struct proc* p)
+{
+  p->pass += p->stride;
 }
