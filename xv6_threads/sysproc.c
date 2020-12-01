@@ -7,6 +7,19 @@
 #include "mmu.h"
 #include "proc.h"
 
+// Add system calls for new thread library functions
+int
+sys_clone(void)
+{
+  int size;
+  if(argint(0, &size) < 0)
+    return -1;
+  void* stack;
+  if(argptr(0, (char**)&stack, size) < 0)
+    return -1;
+  return clone(stack, size);
+}
+
 int
 sys_fork(void)
 {
