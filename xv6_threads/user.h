@@ -1,6 +1,5 @@
 struct stat;
 struct rtcdate;
-struct lock_t; // simple spinlock for threads
 
 // system calls
 int fork(void);
@@ -24,7 +23,7 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-int clone(void*, int); // Clone system call
+int clone(void*, int);
 
 // ulib.c
 int stat(const char*, struct stat*);
@@ -39,10 +38,3 @@ void* memset(void*, int, uint);
 void* malloc(uint);
 void free(void*);
 int atoi(const char*);
-
-// threadlock.c
-// Define thread locking mechanisms here
-void lock_init(struct lock_t*);
-void lock_acquire(struct lock_t*);
-void lock_release(struct lock_t*);
-

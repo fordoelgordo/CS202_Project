@@ -13,7 +13,7 @@ struct {
 } ptable;
 
 static struct proc *initproc;
-static int numthread = 1; // Global variable to track the number of active threads in the system
+static int numthread = 0; // Global variable to track the number of threads in the system
 
 int nextpid = 1;
 extern void forkret(void);
@@ -175,39 +175,32 @@ growproc(int n)
   return 0;
 }
 
-/*
- * Author: FSt. J
- * Details: Implementation of kernel thread library
- *
-*/
-
-// clone() system call - this will be called from a thread_create() function call
 int
 clone(void* stack, int size)
 {
-  ++numthread; // Increment the number of threads in the system
-
-  // Follow fork() code to implement the clone() call, but with some changes
+  // Follow code from fork()
   int i, pid;
-  struct proc* np;
-  struct proc* curproc = myproc();
+  struct proc *np;
+  struct proc *curproc = myproc();
 
-  // Allocate the thread
-  if((np = allocproc()) == 0) {
+  // Allocate process.
+  if((np = allocproc()) == 0){
     return -1;
   }
+
+  // Start of new code
+  ++numthread;
   
-  // The thread doesn't need it's own memory, it shares with the parent
   np->pgdir = curproc->pgdir;
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
-  np->thread = 1; // Indicate that this new proc is a thread
-  
-  // We want clone() to return 0 to the child thread, so clear the %eax register in the child's trapframe
+  np->thread = 1;
+
+  // We want clone() to return 0 to the child process, so clear the %eax register in the child's trapframe
   np->tf->eax = 0;
 
-  // We don't create copies of the parent's file descriptors, the thread will share the parent's file descriptors
+  // Don't create copies of the parent's file descriptors
   for (i = 0; i < NOFILE; i++) {
     if (curproc->ofile[i]) {
       np->ofile[i] = curproc->ofile[i];
@@ -215,22 +208,22 @@ clone(void* stack, int size)
   }
   np->cwd = idup(curproc->cwd);
 
-  // Note that a pointer and size arguments are passed which are used to reference the child's stack
-  // The %esp contains a pointer to the TOS, which is at a lower memory address (the stack grows downwards)
-  // The %ebp contians a pointer to the BOS, where function parameters and local variables are stored.  This pointer is at a higher memory address
-  // Setting up the child's stack
-  uint sp = (uint)stack + PGSIZE; // Make the stack one page 
-  sp -= 2 * sizeof(uint); // Move the stack pointer two memory locations down
-  np->tf->esp = sp; // Set TOS to sp
+  // Set the %esp (top of stack) and %ebp (bottom of stack) to point to the stack that was passed in
+  np->tf->ebp = (uint)(stack + size - 1);
+  np->tf->esp = (uint)(stack + size - 12);
 
-  // The rest of the code mimics fork
+  // Follow the rest of fork's code
   pid = np->pid;
-  np->state = RUNNABLE;
-  safestrcopy(np->name, curproc->name, sizeof(curproc->name));
 
+  acquire(&ptable.lock);
+  np->state = RUNNABLE;
+  release(&ptable.lock);
+
+  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+  
   return pid;
-} 
- 
+}
+
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
@@ -323,6 +316,12 @@ exit(void)
   sched();
   panic("zombie exit");
 }
+
+/*
+ * Author: FSt. J
+ * Comments: Amending wait() to handle kernel threads
+ *
+*/
 
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
