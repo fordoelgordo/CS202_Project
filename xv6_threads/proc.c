@@ -13,7 +13,6 @@ struct {
 } ptable;
 
 static struct proc *initproc;
-static int numthread = 0; // Global variable to track the number of threads in the system
 
 int nextpid = 1;
 extern void forkret(void);
@@ -188,14 +187,13 @@ clone(void* stack, int size)
     return -1;
   }
 
-  // Start of new code
-  ++numthread;
-  
+  // Start of new code 
   np->pgdir = curproc->pgdir;
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
   np->thread = 1;
+  ++curproc->totthreads; // Increase the total threads being tracked
 
   // We want clone() to return 0 to the child process, so clear the %eax register in the child's trapframe
   np->tf->eax = 0;
@@ -209,8 +207,12 @@ clone(void* stack, int size)
   np->cwd = idup(curproc->cwd);
 
   // Set the %esp (top of stack) and %ebp (bottom of stack) to point to the stack that was passed in
-  np->tf->ebp = (uint)(stack + size - 1);
-  np->tf->esp = (uint)(stack + size - 12);
+  void* top = (void*)curproc->tf->esp;
+  void* bottom = (void*)curproc->tf->ebp + 16;
+  uint copy = (uint)(bottom - top);
+  np->tf->esp = (uint)(stack + size - copy);
+  np->tf->ebp = (uint)(stack + size - 16);
+  memmove(stack + size - copy, top, copy);
 
   // Follow the rest of fork's code
   pid = np->pid;
@@ -271,6 +273,12 @@ fork(void)
   return pid;
 }
 
+/*
+ * Author: FSt. J
+ * Comments: amending exit() to handle threads
+ *
+*/
+
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
 // until its parent calls wait() to find out it exited.
@@ -281,14 +289,24 @@ exit(void)
   struct proc *p;
   int fd;
 
+  // Check and see how many threads there are
+  int threads = 0;
+  if (curproc->thread)
+    threads = curproc->parent->totthreads;
+  else
+    threads = curproc->totthreads;
+
   if(curproc == initproc)
     panic("init exiting");
 
   // Close all open files.
-  for(fd = 0; fd < NOFILE; fd++){
-    if(curproc->ofile[fd]){
-      fileclose(curproc->ofile[fd]);
-      curproc->ofile[fd] = 0;
+  // Only close all open files if the proc is the last thread
+  if (threads == 1) {
+    for(fd = 0; fd < NOFILE; fd++){
+      if(curproc->ofile[fd]){
+        fileclose(curproc->ofile[fd]);
+        curproc->ofile[fd] = 0;
+      }
     }
   }
 
@@ -331,9 +349,15 @@ wait(void)
   struct proc *p;
   int havekids, pid;
   struct proc *curproc = myproc();
-  
+ 
   acquire(&ptable.lock);
   for(;;){
+    // Check and see how many threads there are
+    int threads = 0;
+    if (curproc->thread)
+      threads = curproc->parent->totthreads;
+    else
+      threads = curproc->totthreads;
     // Scan through table looking for exited children.
     havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
@@ -345,8 +369,14 @@ wait(void)
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
-        freevm(p->pgdir);
-        p->pid = 0;
+        if (threads == 1) {
+	// Last thread, so free virtual memory
+		freevm(p->pgdir);
+        }
+	if (curproc->thread) {
+		--curproc->totthreads;
+	}
+	p->pid = 0;
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;

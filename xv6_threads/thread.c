@@ -6,8 +6,8 @@
 
 #include "types.h"
 #include "user.h"
-#include "mmu.h"
 #include "x86.h"
+#include "mmu.h"
 #include "thread.h"
 
 // Atomic spin lock functions
@@ -24,4 +24,18 @@ void lock_acquire(struct lock_t* lk)
 void lock_release(struct lock_t* lk)
 {
   xchg(&lk->locked, 0); // Set the lock to 0 in order to release it
+}
+
+// thread_create() implementation
+void thread_create(void* (*start_routine)(void*), void* arg)
+{
+  void* stack = malloc(PGSIZE);
+  int pid; 
+
+  pid = clone(stack, PGSIZE);
+
+  if (pid == 0) {
+    (*start_routine)(arg);
+    exit();
+  }
 }

@@ -50,6 +50,7 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   int thread;		       // To indicate if the proc is a thread or not
+  int totthreads;	       // Keep track of the total number of threads in the system
 };
 
 // Process memory is laid out contiguously, low addresses first:

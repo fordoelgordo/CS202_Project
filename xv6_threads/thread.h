@@ -10,4 +10,4 @@ void lock_acquire(struct lock_t*);
 void lock_release(struct lock_t*);
 
 // thread_create() user function
-//void thread_create(void* (*start_routine)(void*), void* arg);
+void thread_create(void* (*start_routine)(void*), void* arg);

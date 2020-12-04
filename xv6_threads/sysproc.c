@@ -94,11 +94,12 @@ sys_uptime(void)
 int
 sys_clone(void)
 {
-  int size;
-  if (argint(0, &size) < 0)
-    return -1;
   void* stack;
-  if (argptr(0, (char**)&stack, size) < 0)
+  int size;
+
+  if (argint(1, &size) < 0)
+    return -1;
+  if (argint(0, (int*)&stack) < 0)
     return -1;
 
   return clone(stack, size);
